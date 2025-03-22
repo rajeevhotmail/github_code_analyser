@@ -25,7 +25,6 @@ from embeddings_manager import EmbeddingsManager
 
 # Setup module logger
 logger = logging.getLogger("rag_engine")
-logger.propagate = False
 logger.setLevel(logging.DEBUG)
 
 # Create console handler if not already present
@@ -86,7 +85,10 @@ class RAGEngine:
         self,
         embeddings_dir: str,
         repo_info: Dict[str, Any],
-        use_openai: bool = True,
+        use_openai: bool = False,
+        use_local_llm: bool = False,
+        local_llm_path: Optional[str] = None,
+        local_llm_type: str = "llama2",
         log_level: int = logging.INFO
     ):
         """
@@ -96,11 +98,17 @@ class RAGEngine:
             embeddings_dir: Directory containing embeddings and vector index
             repo_info: Dictionary with repository metadata
             use_openai: Whether to use OpenAI API for generation
+            use_local_llm: Whether to use local LLM for generation
+            local_llm_path: Path to local LLM model file
+            local_llm_type: Type of local LLM model ('llama2' or 'codellama')
             log_level: Logging level for this engine instance
         """
         self.embeddings_dir = embeddings_dir
         self.repo_info = repo_info
         self.use_openai = use_openai
+        self.use_local_llm = use_local_llm
+        self.local_llm_path = local_llm_path
+        self.local_llm_type = local_llm_type
 
         # Load embeddings manager
         self.embedding_manager = EmbeddingsManager(
@@ -133,6 +141,14 @@ class RAGEngine:
                 "Install with: pip install openai"
             )
 
+        # Check if LocalLLM support is available
+        self._has_local_llm = importlib.util.find_spec("local_llm") is not None
+        if use_local_llm and not self._has_local_llm:
+            self.logger.warning(
+                "local_llm module not found but use_local_llm=True. "
+                "Make sure local_llm.py is in your Python path."
+            )
+
         # Load LLM
         self._init_llm()
 
@@ -160,6 +176,12 @@ class RAGEngine:
             self.logger.info("Using fallback generation (no LLM)")
 
     def load_data(self) -> bool:
+        """
+        Load embeddings and chunks data.
+
+        Returns:
+            True if data was loaded successfully, False otherwise
+        """
         # Load embeddings and vector DB
         embeddings_loaded = self.embedding_manager.load_embeddings()
         vector_db_loaded = self.embedding_manager.load_vector_db()
@@ -173,6 +195,7 @@ class RAGEngine:
             # New locations based on observed behavior
             os.path.join(os.path.dirname(self.embeddings_dir), "data", f"{self.repo_info['name']}_chunks.json"),
             os.path.join(os.path.dirname(self.embeddings_dir), "data", "Textualize_rich_chunks.json"),
+            os.path.join(os.path.dirname(self.embeddings_dir), "data", "rich_chunks.json"),
             os.path.join(os.path.dirname(self.embeddings_dir), "data", "_chunks.json")
         ]
 
@@ -489,12 +512,16 @@ if __name__ == "__main__":
         repo_info = json.load(f)
 
     # Initialize RAG engine
-    engine = RAGEngine(
-        embeddings_dir=args.embeddings_dir,
+    rag_engine = RAGEngine(
+        embeddings_dir=dirs["embeddings"],
         repo_info=repo_info,
         use_openai=args.use_openai,
+        use_local_llm=args.use_local_llm,
+        local_llm_path=args.local_llm_path,
+        local_llm_type=args.local_llm_type,
         log_level=log_level
     )
+
 
     # Load data
     if not engine.load_data():

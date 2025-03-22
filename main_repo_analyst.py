@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+
+    #!/usr/bin/env python3
 """
 Repository Analysis Tool
 
@@ -33,21 +34,16 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("main")
-logger.propagate = False
-logger.setLevel(logging.DEBUG)
-
-# Create console handler if not already present
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+logger = logging.getLogger(__name__)
 
 # Create file handler for main script
 os.makedirs("logs", exist_ok=True)
 log_file = os.path.join("logs", f"repo_analysis_{int(time.time())}.log")
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
 
 def parse_arguments():
@@ -62,11 +58,17 @@ def parse_arguments():
     parser.add_argument("--output-dir", default="./output", help="Base directory for outputs")
     parser.add_argument("--persistent", action="store_true", help="Clone to a persistent directory")
     parser.add_argument("--use-openai", action="store_true", help="Use OpenAI for answer generation")
+    # Add these new parameters
+    parser.add_argument("--use-local-llm", action="store_true", help="Use local LLM for answer generation")
+    parser.add_argument("--local-llm-path", help="Path to local LLM model file")
+    parser.add_argument("--local-llm-type", default="llama2", choices=["llama2", "codellama"],
+                       help="Type of local LLM model")
     parser.add_argument("--skip-fetch", action="store_true", help="Skip repository fetching (use existing)")
     parser.add_argument("--skip-process", action="store_true", help="Skip content processing (use existing)")
     parser.add_argument("--skip-embed", action="store_true", help="Skip embedding generation (use existing)")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="Logging level")
+    parser.add_argument("--output", default="report.pdf", help="Output PDF filename")
 
     args = parser.parse_args()
 
@@ -117,7 +119,7 @@ def main():
     """Main entry point for the script."""
     start_time = time.time()
     args = parse_arguments()
-
+    print("DEBUG: Command line arguments:", vars(args))
     # Set log level
     log_level = getattr(logging, args.log_level)
     logger.setLevel(log_level)
@@ -327,32 +329,6 @@ QUESTIONS = {
         "What support options are available for customers?"
     ]
 }
-
-def parse_arguments():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Analyze GitHub/GitLab repositories")
-    parser.add_argument("--url", help="Repository URL")
-    parser.add_argument("--local-path", help="Path to local repository")
-    parser.add_argument("--role", required=True, choices=["programmer", "ceo", "sales_manager"],
-                        help="Role perspective for analysis")
-    parser.add_argument("--github-token", help="GitHub personal access token")
-    parser.add_argument("--gitlab-token", help="GitLab personal access token")
-    parser.add_argument("--output-dir", default="./output", help="Base directory for outputs")
-    parser.add_argument("--persistent", action="store_true", help="Clone to a persistent directory")
-    parser.add_argument("--use-openai", action="store_true", help="Use OpenAI for answer generation")
-    parser.add_argument("--skip-fetch", action="store_true", help="Skip repository fetching (use existing)")
-    parser.add_argument("--skip-process", action="store_true", help="Skip content processing (use existing)")
-    parser.add_argument("--skip-embed", action="store_true", help="Skip embedding generation (use existing)")
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                        help="Logging level")
-
-    args = parser.parse_args()
-
-    # Ensure at least one of --url or --local-path is provided
-    if not args.url and not args.local_path and not (args.skip_fetch and args.skip_process):
-        parser.error("Either --url or --local-path is required")
-
-    return args
 
 def main():
     """Main entry point for the script."""
