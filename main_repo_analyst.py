@@ -217,6 +217,9 @@ def main():
             embeddings_dir=dirs["embeddings"],
             repo_info=repo_info,
             use_openai=args.use_openai,
+            use_local_llm=args.use_local_llm,
+            local_llm_path=args.local_llm_path,
+            local_llm_type=args.local_llm_type,
             log_level=log_level
         )
 

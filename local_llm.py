@@ -28,6 +28,7 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 
 
+
 class LocalLLM:
     """
     Interface for local LLaMA models.
@@ -68,6 +69,7 @@ class LocalLLM:
         # Load the model
         self.llm = None
         self._load_model()
+
 
     def _load_model(self):
         """Load the LLaMA model."""
@@ -134,6 +136,7 @@ class LocalLLM:
             prompt = f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
 
         return prompt
+
 
     def generate_answer(
         self,

@@ -23,18 +23,19 @@ from pathlib import Path
 
 from embeddings_manager import EmbeddingsManager
 
-# Setup module logger
 logger = logging.getLogger("rag_engine")
 logger.setLevel(logging.DEBUG)
 
-# Create console handler if not already present
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+# Remove all existing handlers
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
 
+# Create console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
 class RAGEngine:
     """
@@ -120,6 +121,10 @@ class RAGEngine:
         self.logger = logging.getLogger(f"rag_engine.{os.path.basename(embeddings_dir)}")
         self.logger.setLevel(log_level)
 
+        # Remove all existing handlers
+        for handler in self.logger.handlers[:]:
+            self.logger.removeHandler(handler)
+
         # Create file handler for this instance
         log_dir = os.path.join(embeddings_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
@@ -154,6 +159,11 @@ class RAGEngine:
 
     def _init_llm(self):
         """Initialize the LLM for generation."""
+        self.openai_client = None
+        self.local_llm = None
+
+        self.logger.info(f"Initializing LLM: use_openai={self.use_openai}, use_local_llm={self.use_local_llm}")
+
         if self.use_openai and self._has_openai:
             try:
                 import openai
@@ -171,8 +181,63 @@ class RAGEngine:
             except Exception as e:
                 self.logger.error(f"Error initializing OpenAI client: {e}", exc_info=True)
                 self.openai_client = None
-        else:
-            self.openai_client = None
+
+        # Add debug logs for local LLM import
+        if self.use_local_llm:
+            try:
+                self.logger.info("Attempting to import local_llm module")
+                from local_llm import LocalLLM
+                self.logger.info("Local LLM module imported successfully")
+
+                # Add checks for local LLM path
+                if self.local_llm_path:
+                    self.logger.info(f"Checking local LLM path: {self.local_llm_path}")
+                    if os.path.exists(self.local_llm_path):
+                        self.logger.info(f"Local LLM file exists: {self.local_llm_path}")
+
+                        # Initialize the local LLM
+                        self.logger.info(f"Initializing local LLM: {self.local_llm_path} (type: {self.local_llm_type})")
+                        self.local_llm = LocalLLM(
+                            model_path=self.local_llm_path,
+                            model_type=self.local_llm_type
+                        )
+                    else:
+                        self.logger.error(f"Local LLM file not found: {self.local_llm_path}")
+                else:
+                    self.logger.warning("No local LLM path provided")
+
+                    # Try to find a default model
+                    possible_paths = [
+                        "../embeded_qa/llama_model/codellama-7b.Q4_K_M.gguf",
+                        "../embeded_qa/models/llama-2-7b-chat.gguf"
+                    ]
+
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            self.logger.info(f"Found default LLM path: {path}")
+                            self.local_llm_path = path
+                            if "codellama" in path:
+                                self.local_llm_type = "codellama"
+                            else:
+                                self.local_llm_type = "llama2"
+
+                            # Initialize with the default model
+                            self.logger.info(f"Initializing local LLM with default path: {self.local_llm_path}")
+                            self.local_llm = LocalLLM(
+                                model_path=self.local_llm_path,
+                                model_type=self.local_llm_type
+                            )
+                            break
+
+                    if not self.local_llm_path:
+                        self.logger.error("Could not find a default LLM path")
+            except ImportError as e:
+                self.logger.error(f"Failed to import local_llm module: {e}", exc_info=True)
+            except Exception as e:
+                self.logger.error(f"Error initializing local LLM: {e}", exc_info=True)
+                self.local_llm = None
+
+        if not (self.openai_client or self.local_llm):
             self.logger.info("Using fallback generation (no LLM)")
 
     def load_data(self) -> bool:
@@ -265,6 +330,36 @@ class RAGEngine:
         self, question: str, chunks: List[Dict[str, Any]], max_tokens: int = 1000
     ) -> str:
         """
+        Generate answer using an LLM.
+
+        Args:
+            question: Question text
+            chunks: Relevant chunks
+            max_tokens: Maximum tokens for generation
+
+        Returns:
+            Generated answer
+        """
+        self.logger.info(f"Generating answer with LLM. Available: OpenAI={self.openai_client is not None}, Local LLM={self.local_llm is not None}")
+
+        # Try OpenAI first if configured
+        if self.openai_client:
+            self.logger.info("Using OpenAI for generation")
+            return self._generate_with_openai(question, chunks, max_tokens)
+
+        # Try local LLM if available
+        if self.local_llm:
+            self.logger.info("Using local LLM for generation")
+            return self._generate_with_local_llm(question, chunks, max_tokens)
+
+        # Fall back to basic generation
+        self.logger.warning("No LLM available, using fallback generation")
+        return self._generate_answer_fallback(question, chunks)
+
+    def _generate_with_openai(
+        self, question: str, chunks: List[Dict[str, Any]], max_tokens: int = 1000
+    ) -> str:
+        """
         Generate answer using OpenAI API.
 
         Args:
@@ -275,10 +370,6 @@ class RAGEngine:
         Returns:
             Generated answer
         """
-        if not self.openai_client:
-            self.logger.warning("OpenAI client not initialized, using fallback generation")
-            return self._generate_answer_fallback(question, chunks)
-
         try:
             # Prepare context from chunks
             context = []
@@ -326,7 +417,7 @@ class RAGEngine:
             start_time = time.time()
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4-turbo",  # Use appropriate model
+                model="gpt-3.5-turbo",  # Use appropriate model
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -344,11 +435,67 @@ class RAGEngine:
                 f"Generated answer with OpenAI in {elapsed:.2f}s, "
                 f"{len(answer)} chars"
             )
+            prompt_tokens = response.usage.prompt_tokens
+            completion_tokens = response.usage.completion_tokens
+            total_tokens = response.usage.total_tokens
+
+            self.logger.info(f"Token usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
 
             return answer
 
         except Exception as e:
             self.logger.error(f"Error generating answer with OpenAI: {e}", exc_info=True)
+            return self._generate_answer_fallback(question, chunks)
+    def _generate_with_local_llm(
+        self, question: str, chunks: List[Dict[str, Any]], max_tokens: int = 1000
+    ) -> str:
+        """
+        Generate answer using local LLM.
+
+        Args:
+            question: Question text
+            chunks: Relevant chunks
+            max_tokens: Maximum tokens for generation
+
+        Returns:
+            Generated answer
+        """
+        try:
+            # Prepare context from chunks
+            context_parts = []
+            for i, chunk_data in enumerate(chunks, 1):
+                chunk = chunk_data["chunk"]
+                context_parts.append(f"[Document {i}]")
+                context_parts.append(f"File: {chunk['file_path']}")
+                if chunk.get('name'):
+                    context_parts.append(f"Name: {chunk['name']}")
+                context_parts.append(f"Content:\n{chunk['content']}\n")
+
+            context_text = "\n".join(context_parts)
+
+            # Generate answer with local LLM
+            start_time = time.time()
+
+            self.logger.info(f"Generating answer with local LLM for question: {question[:50]}...")
+
+            answer = self.local_llm.generate_answer(
+                question=question,
+                context=context_text,
+                max_tokens=max_tokens,
+                temperature=0.2
+            )
+
+            elapsed = time.time() - start_time
+
+            self.logger.info(
+                f"Generated answer with local LLM in {elapsed:.2f}s, "
+                f"{len(answer)} chars"
+            )
+
+            return answer
+
+        except Exception as e:
+            self.logger.error(f"Error generating answer with local LLM: {e}", exc_info=True)
             return self._generate_answer_fallback(question, chunks)
 
     def _generate_answer_fallback(self, question: str, chunks: List[Dict[str, Any]]) -> str:
