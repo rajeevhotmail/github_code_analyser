@@ -359,28 +359,11 @@ class RAGEngine:
     def _generate_with_openai(
         self, question: str, chunks: List[Dict[str, Any]], max_tokens: int = 1000
     ) -> str:
-        """
-        Generate answer using OpenAI API.
-
-        Args:
-            question: Question text
-            chunks: Relevant chunks
-            max_tokens: Maximum tokens for generation
-
-        Returns:
-            Generated answer
-        """
+        """Generate answer using OpenAI API."""
         try:
-            # Prepare context from chunks
-            context = []
-            for i, chunk_data in enumerate(chunks, 1):
-                chunk = chunk_data["chunk"]
-                context.append(f"CONTEXT {i}:\nFile: {chunk['file_path']}")
-                if chunk.get('name'):
-                    context.append(f"Name: {chunk['name']}")
-                context.append(f"Content:\n{chunk['content']}\n")
-
-            context_text = "\n".join(context)
+            # Import tiktoken for token counting
+            import tiktoken
+            encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
             # Prepare repository information
             repo_name = self.repo_info.get('name', 'Unknown')
@@ -388,21 +371,52 @@ class RAGEngine:
             repo_type = self.repo_info.get('type', 'Unknown')
             repo_languages = ", ".join(self.repo_info.get('languages', {}).keys())
 
-            # Create prompt
+            # Create base prompt
             system_prompt = f"""
             You are a technical analyst providing information about the repository {repo_name} by {repo_owner}.
-            You will be given a question about the repository and relevant context extracted from the repository files.
             Answer the question thoroughly based ONLY on the provided context.
-            If the context doesn't contain enough information to answer the question, say so clearly.
-            Do not make up information that is not supported by the context.
-            
-            Repository information:
-            - Name: {repo_name}
-            - Owner: {repo_owner}
-            - Type: {repo_type}
-            - Languages: {repo_languages}
+            If the context doesn't contain enough information, say so clearly.
             """
 
+            # Count tokens in the system prompt
+            system_tokens = len(encoding.encode(system_prompt))
+            question_tokens = len(encoding.encode(question))
+
+            # Set maximum context tokens (leaving room for response)
+            max_context_tokens = 8000 - system_tokens - question_tokens - max_tokens
+
+            # Prepare context from chunks, limiting to max_context_tokens
+            context = []
+            current_tokens = 0
+
+            # Sort chunks by similarity (assuming they're already sorted)
+            for i, chunk_data in enumerate(chunks[:10], 1):  # Limit to top 10 chunks max
+                chunk = chunk_data["chunk"]
+                chunk_text = f"CONTEXT {i}:\nFile: {chunk['file_path']}"
+                if chunk.get('name'):
+                    chunk_text += f"\nName: {chunk['name']}"
+
+                # Truncate content if needed
+                content = chunk['content']
+                if len(content) > 2000:  # Arbitrary limit to avoid extremely long chunks
+                    content = content[:2000] + "... [truncated]"
+
+                chunk_text += f"\nContent:\n{content}\n"
+
+                # Count tokens for this chunk
+                chunk_tokens = len(encoding.encode(chunk_text))
+
+                # Add chunk if it fits within the token limit
+                if current_tokens + chunk_tokens <= max_context_tokens:
+                    context.append(chunk_text)
+                    current_tokens += chunk_tokens
+                else:
+                    self.logger.info(f"Skipping chunk {i} due to token limit")
+                    break
+
+            context_text = "\n".join(context)
+
+            # Final prompt
             user_prompt = f"""
             Question: {question}
             
@@ -410,20 +424,29 @@ class RAGEngine:
             
             {context_text}
             
-            Answer the question based on this information. Be specific, thorough, and reference relevant files or code.
+            Answer the question based on this information. Be specific and reference relevant files or code.
             """
+
+            # Calculate final token count
+            total_input_tokens = system_tokens + len(encoding.encode(user_prompt))
+            self.logger.info(f"Total input tokens: {total_input_tokens}")
+
+            # If still too large, further reduce
+            if total_input_tokens > 15000:  # OpenAI's limit is higher, but be safe
+                self.logger.warning(f"Input still too large ({total_input_tokens} tokens), reducing further")
+                return self._generate_answer_fallback(question, chunks)
 
             # Call OpenAI API
             start_time = time.time()
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",  # Use appropriate model
+                model="gpt-3.5-turbo",  # Using a smaller model to reduce token costs
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=max_tokens,
-                temperature=0.2  # Lower temperature for more factual responses
+                temperature=0.2
             )
 
             elapsed = time.time() - start_time
@@ -431,15 +454,18 @@ class RAGEngine:
             # Extract answer from response
             answer = response.choices[0].message.content
 
+            # Log token usage
+            usage = response.usage
+            self.logger.info(
+                f"Token usage - Prompt: {usage.prompt_tokens}, "
+                f"Completion: {usage.completion_tokens}, "
+                f"Total: {usage.total_tokens}"
+            )
+
             self.logger.info(
                 f"Generated answer with OpenAI in {elapsed:.2f}s, "
                 f"{len(answer)} chars"
             )
-            prompt_tokens = response.usage.prompt_tokens
-            completion_tokens = response.usage.completion_tokens
-            total_tokens = response.usage.total_tokens
-
-            self.logger.info(f"Token usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
 
             return answer
 
