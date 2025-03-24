@@ -24,18 +24,17 @@ from pathlib import Path
 from embeddings_manager import EmbeddingsManager
 
 logger = logging.getLogger("rag_engine")
+logger.propagate = False
 logger.setLevel(logging.DEBUG)
 
-# Remove all existing handlers
-for handler in logger.handlers[:]:
-    logger.removeHandler(handler)
+# Create console handler if not already present
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
-# Create console handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
 
 class RAGEngine:
     """
@@ -241,28 +240,44 @@ class RAGEngine:
             self.logger.info("Using fallback generation (no LLM)")
 
     def load_data(self) -> bool:
-        """
-        Load embeddings and chunks data.
-
-        Returns:
-            True if data was loaded successfully, False otherwise
-        """
+        """Load embeddings and chunks data."""
         # Load embeddings and vector DB
         embeddings_loaded = self.embedding_manager.load_embeddings()
         vector_db_loaded = self.embedding_manager.load_vector_db()
 
-        # Check several possible locations for the chunks file
-        possible_locations = [
-            # Original locations
-            os.path.join(self.embeddings_dir, "chunks.json"),
-            os.path.join(os.path.dirname(self.embeddings_dir), f"{self.repo_info['name']}_chunks.json"),
+        # Get repository name and owner
+        repo_name = self.repo_info.get('name', '')
+        repo_owner = self.repo_info.get('owner', '')
 
-            # New locations based on observed behavior
-            os.path.join(os.path.dirname(self.embeddings_dir), "data", f"{self.repo_info['name']}_chunks.json"),
+        # Possible filename patterns
+        chunk_filenames = [
+            "chunks.json",                      # Generic name
+            f"{repo_name}_chunks.json",         # Just repo name
+            f"{repo_owner}_{repo_name}_chunks.json"  # Owner and repo name
+        ]
+
+        # Possible directory locations
+        possible_dirs = [
+            self.embeddings_dir,
+            os.path.dirname(self.embeddings_dir),
+            os.path.join(os.path.dirname(self.embeddings_dir), "data")
+        ]
+
+        # Generate all possible locations
+        possible_locations = []
+        for directory in possible_dirs:
+            for filename in chunk_filenames:
+                possible_locations.append(os.path.join(directory, filename))
+
+        # Add any additional paths you've seen in the wild
+        possible_locations.extend([
             os.path.join(os.path.dirname(self.embeddings_dir), "data", "Textualize_rich_chunks.json"),
             os.path.join(os.path.dirname(self.embeddings_dir), "data", "rich_chunks.json"),
             os.path.join(os.path.dirname(self.embeddings_dir), "data", "_chunks.json")
-        ]
+        ])
+
+        # For debugging
+        self.logger.info(f"Looking for chunks files with patterns: {chunk_filenames}")
 
         chunks_loaded = False
         for location in possible_locations:
