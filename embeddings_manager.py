@@ -152,7 +152,7 @@ class EmbeddingsManager:
 
     def _preprocess_chunk(self, chunk: Dict[str, Any]) -> str:
         """
-        Preprocess a chunk for embedding.
+        Preprocess a chunk for embedding with enhanced context.
 
         Args:
             chunk: Content chunk dictionary
@@ -161,29 +161,43 @@ class EmbeddingsManager:
             Preprocessed text suitable for embedding
         """
         content = chunk["content"]
+        chunk_type = chunk.get("chunk_type", "unknown")
 
-        # Add metadata as prefix for better context
-        prefix = []
+        # Create a structured header with metadata
+        header_parts = []
 
+        # Always include file path
         if chunk["file_path"]:
-            prefix.append(f"File: {chunk['file_path']}")
+            header_parts.append(f"FILE: {chunk['file_path']}")
 
-        if chunk["chunk_type"]:
-            prefix.append(f"Type: {chunk['chunk_type']}")
+        # Add type and language
+        type_info = []
+        if chunk_type:
+            type_info.append(chunk_type)
+        if chunk.get("language"):
+            type_info.append(chunk["language"])
+        if type_info:
+            header_parts.append(f"TYPE: {' - '.join(type_info)}")
 
-        if chunk["language"]:
-            prefix.append(f"Language: {chunk['language']}")
+        # Add name and parent for code elements
+        if chunk_type == "code":
+            if chunk.get("name"):
+                if chunk.get("metadata", {}).get("type") in ["class", "function", "method"]:
+                    header_parts.append(f"{chunk['metadata']['type'].upper()}: {chunk['name']}")
+                else:
+                    header_parts.append(f"NAME: {chunk['name']}")
 
-        if chunk["name"]:
-            prefix.append(f"Name: {chunk['name']}")
+            if chunk.get("parent"):
+                header_parts.append(f"PARENT: {chunk['parent']}")
 
-        if chunk["parent"]:
-            prefix.append(f"Parent: {chunk['parent']}")
+        # For documentation, highlight the section name
+        if chunk_type == "documentation" and chunk.get("name"):
+            header_parts.append(f"SECTION: {chunk['name']}")
 
-        # Join prefix with content
-        if prefix:
-            prefix_text = " | ".join(prefix)
-            return f"{prefix_text}\n\n{content}"
+        # Join header with content
+        if header_parts:
+            header = " | ".join(header_parts)
+            return f"{header}\n\n{content}"
         else:
             return content
 
@@ -436,6 +450,71 @@ class EmbeddingsManager:
             self.logger.error(f"Error searching vector DB: {e}", exc_info=True)
             return []
 
+    def rerank_search_results(self, results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+        """Rerank search results based on content relevance."""
+        query_lower = query.lower()
+
+        # Define penalties for common non-implementation files
+        low_value_patterns = [
+            'license', '.github/', 'setup.cfg', '.gitignore',
+            '.editorconfig', 'changelog', 'funding', 'contributing.md'
+        ]
+
+        # Define high-value implementation patterns (language-agnostic)
+        high_value_patterns = [
+            '/src/', '/lib/', '/core/', '/models/', '/controllers/',
+            '/services/', '/utils/', '/helpers/', '/app/', '/internal/',
+            'main.', 'app.', 'index.'
+        ]
+
+        # Generic file types that typically answer specific questions
+        question_file_mapping = {
+            'language': ['.py', '.js', '.ts', '.java', '.go', '.rb', '.php', 'requirements.txt', 'package.json'],
+            'architecture': ['__init__.py', 'main.', 'app.', 'index.', '/src/', '/app/'],
+            'component': ['/src/', '/lib/', '/core/', '/internal/', '/pkg/'],
+            'testing': ['test_', 'spec_', '_test', '_spec', 'test/', 'tests/', 'spec/', 'specs/'],
+            'dependencies': ['requirements.txt', 'package.json', 'go.mod', 'gemfile', 'pom.xml', 'build.gradle'],
+            'coding standards': ['.editorconfig', '.eslintrc', '.flake8', '.pylintrc', 'checkstyle'],
+            'build': ['.github/workflows/', 'Makefile', 'build.', 'ci/', 'Dockerfile'],
+            'version control': ['.git', 'version', '.gitignore']
+        }
+
+        for result in results:
+            chunk = result["chunk"]
+            # Start with the similarity score
+            score = result["similarity"]
+
+            # Get file path and normalize it
+            file_path = chunk["file_path"].lower()
+
+            # Downrank non-informative files
+            if any(pattern in file_path for pattern in low_value_patterns):
+                score *= 0.3
+
+            # Boost implementation files
+            if any(pattern in file_path for pattern in high_value_patterns):
+                score *= 2.5
+
+            # Apply question-specific file boosts
+            for question_type, file_patterns in question_file_mapping.items():
+                if question_type in query_lower:
+                    if any(pattern in file_path for pattern in file_patterns):
+                        score *= 2.0
+
+            # Boost for file content that directly mentions the query terms
+            content = chunk.get("content", "").lower()
+            query_terms = [term for term in query_lower.split() if len(term) > 3]
+            if query_terms:
+                matching_terms = sum(1 for term in query_terms if term in content)
+                term_ratio = matching_terms / len(query_terms)
+                score *= (1.0 + term_ratio * 1.5)
+
+            result["adjusted_score"] = score
+
+        # Sort by adjusted score
+        results.sort(key=lambda x: x["adjusted_score"], reverse=True)
+
+        return results
 
 # Example usage
 if __name__ == "__main__":
