@@ -151,6 +151,56 @@ class PDFGenerator:
             self.logger.error(f"Error creating language chart: {e}", exc_info=True)
             return None
 
+    # Add this helper function to your PDFGenerator class
+    # Add this helper function to your PDFGenerator class
+    def _escape_xml(self, text: str) -> str:
+        """
+        Escape XML special characters in text to prevent ReportLab parsing errors.
+
+        Args:
+            text: Text to escape
+
+        Returns:
+            Escaped text
+        """
+        if not text:
+            return ""
+
+        # Replace XML special characters
+        replacements = [
+            ('&', '&amp;'),  # Must be first to avoid double-escaping
+            ('<', '&lt;'),
+            ('>', '&gt;'),
+            ('"', '&quot;'),
+            ("'", '&#39;')
+        ]
+
+        for old, new in replacements:
+            text = text.replace(old, new)
+
+        return text
+
+    def _safe_paragraph(self, text, style):
+        """
+        Safely create a paragraph, escaping XML and handling any errors.
+
+        Args:
+            text: Text content for the paragraph
+            style: Paragraph style
+
+        Returns:
+            Paragraph object or a simple Spacer if paragraph creation fails
+        """
+        try:
+            from reportlab.platypus import Paragraph, Spacer
+            from reportlab.lib.units import inch
+
+            escaped_text = self._escape_xml(text)
+            return Paragraph(escaped_text, style)
+        except Exception as e:
+            self.logger.warning(f"Error creating paragraph: {e}. Text: {text[:50]}...")
+            # Return a spacer instead of failing completely
+            return Spacer(1, 0.1*inch)
     def generate_pdf(self, report_data: Dict[str, Any]) -> str:
         """
         Generate a PDF report from repository analysis results.
@@ -241,18 +291,18 @@ class PDFGenerator:
             story = []
 
             # Cover Page
-            story.append(Paragraph(f"Repository Analysis Report: {repo_name}", title_style))
-            story.append(Paragraph(f"{role.capitalize()} Perspective", subtitle_style))
+            story.append(self._safe_paragraph(f"Repository Analysis Report: {repo_name}", title_style))
+            story.append(self._safe_paragraph(f"{role.capitalize()} Perspective", subtitle_style))
             story.append(Spacer(1, 0.5*inch))
 
             today = datetime.now().strftime("%B %d, %Y")
-            story.append(Paragraph(f"Generated on {today}", styles['Normal']))
+            story.append(self._safe_paragraph(f"Generated on {today}", styles['Normal']))
 
             story.append(Spacer(1, 1*inch))
 
             # Repository Information
             story.append(PageBreak())
-            story.append(Paragraph("Repository Information", heading1_style))
+            story.append(self._safe_paragraph("Repository Information", heading1_style))
 
             # Create a table for repository info
             repo_data = [
@@ -286,7 +336,7 @@ class PDFGenerator:
                 chart_path = self._create_language_chart(repository, chart_file)
 
                 if chart_path and os.path.exists(chart_path):
-                    story.append(Paragraph("Programming Languages Distribution:", heading2_style))
+                    story.append(self._safe_paragraph("Programming Languages Distribution:", heading2_style))
                     story.append(Spacer(1, 0.2*inch))
 
                     # Add the chart
@@ -295,13 +345,13 @@ class PDFGenerator:
 
             # Introduction
             story.append(PageBreak())
-            story.append(Paragraph("Introduction", heading1_style))
+            story.append(self._safe_paragraph("Introduction", heading1_style))
 
             role_description = self.ROLE_DESCRIPTIONS.get(role, "This report provides an analysis of the repository.")
-            story.append(Paragraph(role_description, normal_style))
+            story.append(self._safe_paragraph(role_description, normal_style))
 
             story.append(Spacer(1, 0.3*inch))
-            story.append(Paragraph(
+            story.append(self._safe_paragraph(
                 "The following pages contain answers to key questions relevant to this perspective, "
                 "based on automated analysis of the repository content.", normal_style))
 
@@ -313,27 +363,27 @@ class PDFGenerator:
                 answer = qa_pair['answer']
 
                 # Question Header
-                story.append(Paragraph(f"Question {i}: {question}", heading1_style))
+                story.append(self._safe_paragraph(f"Question {i}: {question}", heading1_style))
 
                 # Answer
-                story.append(Paragraph(answer, normal_style))
+                story.append(self._safe_paragraph(answer, normal_style))
 
                 # Add sources if available
                 if 'supporting_chunks' in qa_pair and qa_pair['supporting_chunks']:
                     story.append(Spacer(1, 0.3*inch))
-                    story.append(Paragraph("Based on information from:", heading2_style))
+                    story.append(self._safe_paragraph("Based on information from:", heading2_style))
 
                     for j, chunk in enumerate(qa_pair['supporting_chunks'][:3], 1):  # Limit to top 3 sources
                         source = f"{j}. {chunk['file_path']}"
                         if chunk.get('name'):
                             source += f" ({chunk['name']})"
-                        story.append(Paragraph(source, styles['Italic']))
+                        story.append(self._safe_paragraph(source, styles['Italic']))
 
             # Conclusion
             story.append(PageBreak())
-            story.append(Paragraph("Conclusion", heading1_style))
+            story.append(self._safe_paragraph("Conclusion", heading1_style))
 
-            story.append(Paragraph(
+            story.append(self._safe_paragraph(
                 "This report was generated automatically by analyzing the repository content. "
                 "The analysis is based on the code, documentation, and configuration files present in the repository. "
                 "For more detailed information, please refer to the repository itself or contact the development team.",
