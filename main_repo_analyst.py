@@ -22,13 +22,14 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-
+from pdf_narrative_writer import PDFNarrativeWriter
+from narrative_stitcher import extract_narrative_and_key_findings
 from repo_fetcher import RepoFetcher
 from content_processor import ContentProcessor
 from embeddings_manager import EmbeddingsManager
 from rag_engine import RAGEngine
 from pdf_generator import PDFGenerator
-
+from narrative_stitcher import NarrativeStitcher
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -231,7 +232,32 @@ def main():
         # Generate report data
         report_data = rag_engine.generate_report_data(args.role)
         logger.info(f"Generated report data for {args.role} role")
+        stitcher = NarrativeStitcher()
+        full_response = stitcher.stitch_narrative(
+            repo_name=report_data["repository"]["name"],
+            role=report_data["role"],
+            qa_pairs=report_data["qa_pairs"]
+        )
 
+        # 🆕 Split narrative and key findings
+        narrative_text, key_findings = extract_narrative_and_key_findings(full_response)
+
+        print("***************** Narrative Report ********************************************")
+        print(narrative_text)
+        print("\n----------------- Key Findings -----------------")
+        print("\n".join(key_findings))
+        print("***************** End of Narrative Report ********************************************")
+
+        # Step 6: Generate PDF report
+        pdf_writer = PDFNarrativeWriter()
+        pdf_path = pdf_writer.write_pdf(
+            text=narrative_text,
+            repo_name=report_data["repository"]["name"],
+            role=report_data["role"],
+            key_findings=key_findings  # 🆕 pass key findings
+        )
+        print(f"PDF saved to: {pdf_path}")
+        """
         # Step 5: Generate PDF
         logger.info("Generating PDF report...")
 
@@ -254,6 +280,16 @@ def main():
         logger.info(f"Repository analysis completed in {elapsed:.2f}s")
         print(f"Total processing time: {elapsed:.2f} seconds")
 
+        ascii_report = pdf_generator.generate_ascii_report(report_data)
+
+        # Save the ASCII report to a text file
+        output_file_path = "repository_analysis_report.txt"
+        with open(output_file_path, "w", encoding="utf-8") as f:
+            f.write(ascii_report)
+
+        print(f"*************** ASCII report saved to {output_file_path} ****************************")
+
+        """
     except Exception as e:
         logger.error(f"Error analyzing repository: {e}", exc_info=True)
         print(f"Error: {e}")
