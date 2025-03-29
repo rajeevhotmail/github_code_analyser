@@ -1,18 +1,35 @@
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 import os
 import time
+import re
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, PageBreak
+)
+from reportlab.platypus.tableofcontents import TableOfContents
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from section_headers import ROLE_SECTION_HEADERS
+
+
+def remove_img_tags(text):
+    return re.sub(r'<img[^>]*>', '', text)
+
+
+class TOCEntry(Paragraph):
+    def __init__(self, text, style, level=0):
+        super().__init__(text, style)
+        self.level = level
+        self.docref = None
+
+    def draw(self):
+        self.canv.bookmarkPage(self.getPlainText())
+        if self.docref:
+            self.docref.notify('TOCEntry', (self.level, self.getPlainText(), self.canv.getPageNumber()))
+        super().draw()
 
 
 class PDFNarrativeWriter:
     def __init__(self, output_dir: str = "output_reports"):
-        """
-        Initializes the PDF writer.
-
-        Args:
-            output_dir: Directory where PDF files will be saved.
-        """
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
@@ -30,11 +47,8 @@ class PDFNarrativeWriter:
         )
 
         styles = getSampleStyleSheet()
-        normal_style = styles['Normal']
-        normal_style.fontName = 'Helvetica'
-        normal_style.fontSize = 11
-        normal_style.leading = 15
-
+        normal = styles["Normal"]
+        heading1 = styles["Heading1"]
         title_style = ParagraphStyle(
             'Title',
             parent=styles['Title'],
@@ -44,30 +58,67 @@ class PDFNarrativeWriter:
             spaceAfter=24
         )
 
-        flowables = [Paragraph(f"Repository Analysis Report: {repo_name} ({role.title()} Perspective)", title_style)]
+        flowables = []
 
-        # Add key findings if present
+        # Title
+        flowables.append(Paragraph(f"Repository Analysis Report:<br/>{repo_name} ({role.title()} Perspective)", title_style))
+        flowables.append(Spacer(1, 24))
+
+        # Table of Contents
+        toc = TableOfContents()
+        toc.levelStyles = [
+            ParagraphStyle(fontSize=12, name='TOCHeading1', leftIndent=20, firstLineIndent=-20, spaceAfter=6)
+        ]
+        flowables.append(Paragraph("Table of Contents", heading1))
+        flowables.append(Spacer(1, 12))
+        flowables.append(toc)
+        flowables.append(PageBreak())
+
+        # Key Findings
         if key_findings:
-            heading = Paragraph("Key Findings", styles["Heading2"])
-            flowables.append(heading)
+            flowables.append(Paragraph("Key Findings", heading1))
             flowables.append(Spacer(1, 12))
-
             for point in key_findings:
                 bullet = f"• {point.strip()}"
-                flowables.append(Paragraph(bullet, normal_style))
+                flowables.append(Paragraph(bullet, normal))
                 flowables.append(Spacer(1, 6))
+            flowables.append(Spacer(1, 24))
 
-            flowables.append(Spacer(1, 18))
+        # Section headers + narrative
+        section_headers = ROLE_SECTION_HEADERS.get(role.lower(), ["Narrative"])
+        paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
+        chunk_size = max(1, len(paragraphs) // len(section_headers))
 
-        # Main narrative
-        for para in text.split('\n'):
-            para = para.strip()
-            if para:
-                flowables.append(Paragraph(para, normal_style))
+        # ✅ Setup afterFlowable hook
+        def capture_toc_entry(flowable):
+            if isinstance(flowable, Paragraph) and hasattr(flowable, '_header_text'):
+                doc.notify('TOCEntry', (flowable._level, flowable._header_text, doc.page))
+
+        doc.afterFlowable = capture_toc_entry
+
+        for i, header in enumerate(section_headers):
+            # Add header paragraph
+            section_para = Paragraph(header, heading1)
+            section_para._header_text = header  # Mark for TOC
+            section_para._level = 0
+            flowables.append(section_para)
+            flowables.append(Spacer(1, 6))
+
+            # Add section content
+            for para in paragraphs[i * chunk_size: (i + 1) * chunk_size]:
+                cleaned_para = remove_img_tags(para)
+                flowables.append(Paragraph(cleaned_para, normal))
                 flowables.append(Spacer(1, 12))
 
-        doc.build(flowables)
+        doc.build(flowables, onFirstPage=self._add_page_number, onLaterPages=self._add_page_number)
         return output_path
+
+
+    def _add_page_number(self, canvas, doc):
+        page_num_text = f"Page {doc.page}"
+        canvas.setFont("Helvetica", 9)
+        canvas.drawRightString(200 * mm, 15 * mm, page_num_text)
+
 
     def write_pdf_from_file(self, file_path: str, repo_name: str, role: str) -> str:
         """

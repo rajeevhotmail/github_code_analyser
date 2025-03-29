@@ -30,6 +30,7 @@ from embeddings_manager import EmbeddingsManager
 from rag_engine import RAGEngine
 from pdf_generator import PDFGenerator
 from narrative_stitcher import NarrativeStitcher
+from weasy_pdf_writer import WeasyPDFWriter
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -248,6 +249,15 @@ def main():
         print("\n".join(key_findings))
         print("***************** End of Narrative Report ********************************************")
 
+        pdf_writer = WeasyPDFWriter()
+        pdf_path = pdf_writer.write_pdf(
+            text=narrative_text,
+            repo_name=report_data["repository"]["name"],
+            role=report_data["role"],
+            key_findings=key_findings
+        )
+        print(f"PDF saved to: {pdf_path}")
+        """
         # Step 6: Generate PDF report
         pdf_writer = PDFNarrativeWriter()
         pdf_path = pdf_writer.write_pdf(
@@ -257,6 +267,7 @@ def main():
             key_findings=key_findings  # 🆕 pass key findings
         )
         print(f"PDF saved to: {pdf_path}")
+        """
         """
         # Step 5: Generate PDF
         logger.info("Generating PDF report...")
