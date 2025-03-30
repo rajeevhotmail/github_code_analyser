@@ -22,7 +22,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from pdf_narrative_writer import PDFNarrativeWriter
+
 from narrative_stitcher import extract_narrative_and_key_findings
 from repo_fetcher import RepoFetcher
 from content_processor import ContentProcessor

@@ -3,6 +3,7 @@ import time
 import sys
 from section_headers import ROLE_SECTION_HEADERS
 from weasyprint import HTML, CSS
+from datetime import datetime
 
 class WeasyPDFWriter:
     def __init__(self, output_dir="output_reports"):
@@ -27,7 +28,7 @@ class WeasyPDFWriter:
         paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
         section_headers = ROLE_SECTION_HEADERS.get(role.lower(), ["Narrative"])
         chunk_size = max(1, len(paragraphs) // len(section_headers))
-
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         html = f"""
         <html>
         <head>
@@ -37,7 +38,7 @@ class WeasyPDFWriter:
         <body>
             <h1>Repository Analysis Report</h1>
             <h2>{repo_name} ({role.title()} Perspective)</h2>
-    
+            <p><em>Generated on: {timestamp}</em></p>
             <h2>Table of Contents</h2>
             <ul>
         """
@@ -52,7 +53,7 @@ class WeasyPDFWriter:
         if key_findings:
             html += "<h2>Key Findings</h2><ul>"
             for point in key_findings:
-                if point.strip():
+                if point.strip():  # ✅ Only include non-empty lines
                     html += f"<li>{point.strip()}</li>"
             html += "</ul>"
 
@@ -72,6 +73,11 @@ class WeasyPDFWriter:
             @page {
                 size: A4;
                 margin: 1in;
+                @bottom-right {
+                    content: "Page " counter(page);
+                    font-size: 10pt;
+                    color: #888;
+                }
             }
             body {
                 font-family: 'Helvetica', sans-serif;
@@ -96,6 +102,7 @@ class WeasyPDFWriter:
                 font-size: 11pt;
             }
         """)
+
 
 # --- CLI Runner ---
 if __name__ == "__main__":
